@@ -546,8 +546,9 @@ proc find_func_id {lib_dict libcell_name} {
     return [list 0 $func_id]
 }
 
-proc load_design_odb {odb libs sdc rcx_rule fp_log} {
+proc load_design_odb {odb libs sdc rcx_rule setrc fp_log} {
     read_db $odb
+    puts $fp_log "Read odb $odb"
     foreach libFile $libs {
         puts $fp_log "Reading liberty file $libFile"
         read_liberty $libFile
@@ -558,14 +559,17 @@ proc load_design_odb {odb libs sdc rcx_rule fp_log} {
     add_global_connection -net {VDD} -inst_pattern {.*} -pin_pattern {^VDD$} -power
     add_global_connection -net {VSS} -inst_pattern {.*} -pin_pattern {^VSS$} -ground
     global_connect
-    # if {$spef == ""} {
-    puts "No SPEF specified."
-    estimate_parasitics -placement
-    # estimate_parasitics -global_routing
-    # } else {
-    #     extract_parasitics -ext_model_file $rcx_rule
-    #     # read_spef $spef
-    # }
+    puts $fp_log "set RC with $setrc"
+    source $setrc
+    if {$rcx_rule == ""} {
+        # estimate_parasitics -placement
+        puts $fp_log "No RCX rules specified, estimate parasitics"
+        global_route
+        estimate_parasitics -global_routing
+    } else {
+        puts $fp_log "RCX rules specified, extract parasitics"
+        extract_parasitics -ext_model_file $rcx_rule
+    }
 }
 
 proc load_design {def netlist libs tech_lef lefs sdc design spef rcx_rule fp_log} {

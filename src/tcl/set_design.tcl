@@ -20,7 +20,7 @@
 set ORFS_FLOW_DIR "/home/xldu/repos/OpenROAD-flow-scripts/flow"
 
 ### SET DESIGN ###
-set DESIGN_NAME riscv32i
+set DESIGN_NAME gcd
 
 ### SET PLATFORM ###
 set PLATFORM asap7
@@ -57,7 +57,15 @@ set ORFS_RESULT_DIR "${ORFS_FLOW_DIR}/results/${PLATFORM}/${DESIGN_NAME}/base"
 set ORFS_2_FLOORPLAN_SDC "${ORFS_RESULT_DIR}/2_floorplan.sdc"
 set ORFS_3_3_PLACE_GP_ODB "${ORFS_RESULT_DIR}/3_3_place_gp.odb"
 set ORFS_3_4_PLACE_RESIZED_ODB "${ORFS_RESULT_DIR}/3_4_place_resized.odb"
+### `estimate_parasitics -placement`
+### `estimate_parasitics -global_routing`, after `global_route`
+### No net_coupling,net_res in net_prop
 set ORFS_3_PLACE_ODB "${ORFS_RESULT_DIR}/3_place.odb"
+set ORFS_4_BEFORE_RSZ_ODB "${ORFS_RESULT_DIR}/4_before_rsz.odb"
+set ORFS_4_AFTER_RSZ_ODB "${ORFS_RESULT_DIR}/4_after_rsz.odb"
+set ORFS_4_CTS_ODB "${ORFS_RESULT_DIR}/4_cts.odb"
+### `extract_parasitics -ext_model_file $RCX_FILE` after detailed_route for SPEF
+set ORFS_5_ROUTE_ODB "${ORFS_RESULT_DIR}/5_route.odb"
 set ORFS_6_FINAL_ODB "${ORFS_RESULT_DIR}/6_final.odb"
 set ORFS_6_FINAL_SDC "${ORFS_RESULT_DIR}/6_final.sdc"
 set ORFS_6_FINAL_SPEF "${ORFS_RESULT_DIR}/6_final.spef"
@@ -67,23 +75,26 @@ set ORFS_6_FINAL_SPEF "${ORFS_RESULT_DIR}/6_final.spef"
 
 ##### CUSTOM PART 2.1: FOR FINAL RESULTS PARSING END #####
 ### PROBLEM WITH ASAP7
-# set LIB_FILES [glob ${ORFS_OBJECT_DIR}/lib/*.lib]
-set LIB_FILES [glob ./design_srcs/${PLATFORM}/lib/*.lib]
-set TECH_LEF_FILE [glob ${ORFS_PLATFORM_DIR}/lef/*tech*lef]
-set LEF_FILES [glob ${ORFS_PLATFORM_DIR}/lef/*.lef]
-set RCX_FILE "${ORFS_PLATFORM_DIR}/rcx_patterns.rules"
-set DEF_FILE "${ORFS_RESULT_DIR}/6_final.def"
-set SDC_FILE "${ORFS_RESULT_DIR}/6_final.sdc"
-set NETLIST_FILE "${ORFS_RESULT_DIR}/6_final.v"
-set SPEF_FILE "${ORFS_RESULT_DIR}/6_final.spef"
-set SETRC_FILE "${ORFS_PLATFORM_DIR}/setRC.tcl"
+# # set LIB_FILES [glob ${ORFS_OBJECT_DIR}/lib/*.lib]
+# set LIB_FILES [glob ./design_resource/${PLATFORM}/lib/*.lib]
+# set TECH_LEF_FILE [glob ${ORFS_PLATFORM_DIR}/lef/*tech*lef]
+# set LEF_FILES [glob ${ORFS_PLATFORM_DIR}/lef/*.lef]
+# set RCX_FILE "${ORFS_PLATFORM_DIR}/rcx_patterns.rules"
+# set DEF_FILE "${ORFS_RESULT_DIR}/6_final.def"
+# set SDC_FILE "${ORFS_RESULT_DIR}/6_final.sdc"
+# set NETLIST_FILE "${ORFS_RESULT_DIR}/6_final.v"
+# set SPEF_FILE "${ORFS_RESULT_DIR}/6_final.spef"
+# set SETRC_FILE "${ORFS_PLATFORM_DIR}/setRC.tcl"
 ##### CUSTOM PART 2.1: FOR FINAL RESULTS PARSING END #####
 
 ######### CUSTOM PART 2.2: FOR .odb PARSING START #########
-# set ODB_FILE ${ORFS_6_FINAL_ODB}
-# # set SPEF_FILE ${ORFS_6_FINAL_SPEF}
+# set rcx rules means extract_parasitics, otherwise estimate
 # set RCX_FILE "${ORFS_PLATFORM_DIR}/rcx_patterns.rules"
-# set LIB_FILES [glob ${ORFS_OBJECT_DIR}/lib/*.lib]
-# set SDC_FILE ${ORFS_2_FLOORPLAN_SDC}
-# set SETRC_FILE "${ORFS_PLATFORM_DIR}/setRC.tcl"
+# set SPEF_FILE "${ORFS_RESULT_DIR}/6_final.spef"
+set LIB_FILES [glob ./design_resource/${PLATFORM}/lib/*.lib]
+set SETRC_FILE "${ORFS_PLATFORM_DIR}/setRC.tcl"
+# set ODB_FILE ${ORFS_6_FINAL_ODB}
+set ODB_FILE ${ORFS_3_3_PLACE_GP_ODB}
+# set ODB_FILE ${ORFS_4_CTS_ODB}
+set SDC_FILE ${ORFS_2_FLOORPLAN_SDC}
 ########## CUSTOM PART 2.2: FOR .odb PARSING END ##########

@@ -20,9 +20,25 @@ set t1 [clock seconds]
 
 set fp_log [open "${OUTPUT_DIR}/log" w]
 
-# load_design_odb $ODB_FILE $LIB_FILES $SDC_FILE $RCX_FILE $fp_log
-load_design $DEF_FILE $NETLIST_FILE $LIB_FILES $TECH_LEF_FILE $LEF_FILES $SDC_FILE $DESIGN_NAME $SPEF_FILE $RCX_FILE $fp_log
-source "${SETRC_FILE}"
+
+if {[info exists ODB_FILE]} {
+    if {[info exists RCX_FILE]} {
+        # extract
+        load_design_odb $ODB_FILE $LIB_FILES $SDC_FILE $RCX_FILE $SETRC_FILE $fp_log
+    } else {
+        # estimate
+        load_design_odb $ODB_FILE $LIB_FILES $SDC_FILE "" $SETRC_FILE $fp_log
+    }
+    if {[info exists SPEF_FILE]} {
+        puts $fp_log "Apply SPEF file ${SETRC_FILE}"
+        read_spef $SPEF_FILE
+    }
+} else {
+    load_design $DEF_FILE $NETLIST_FILE $LIB_FILES $TECH_LEF_FILE $LEF_FILES $SDC_FILE $DESIGN_NAME $SPEF_FILE $RCX_FILE $fp_log
+    puts $fp_log "set RC with ${SETRC_FILE}"
+    source "${SETRC_FILE}"
+}
+
 
 set db [ord::get_db]
 set chip [$db getChip]

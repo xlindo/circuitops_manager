@@ -4,6 +4,7 @@ output/IRs/asap7/aes/
 output/IRs/asap7/ibex/
 output/IRs/asap7/jpeg/
 output/IRs/asap7/riscv32i/
+output2
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
