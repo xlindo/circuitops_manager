@@ -147,56 +147,6 @@ def update_vertices(pin_df, cell_df, net_df, fo4_df):
     cell_df["id"] = range(N_pin, N_pin + N_cell)
     net_df["id"] = range(N_pin + N_cell, total_v_cnt)
 
-    ### processing fo4 table
-    fo4_df["group_id"] = pd.factorize(fo4_df.func_id)[0] + 1
-    fo4_df["libcell_id"] = range(fo4_df.shape[0])
-    libcell_np = fo4_df.to_numpy()
-
-    ### assign cell size class
-    fo4_df["size_class"] = 0
-    fo4_df["size_class2"] = 0
-    fo4_df["size_cnt"] = 0
-    class_cnt = 50
-    for i in range(fo4_df.group_id.min(), fo4_df.group_id.max() + 1):
-        temp = fo4_df.loc[
-            fo4_df.group_id == i, ["group_id", "libcell_delay_fixed_load"]
-        ]
-        temp = temp.sort_values(by=["libcell_delay_fixed_load"], ascending=False)
-        fo4_df.loc[temp.index, ["size_class"]] = range(len(temp))
-        fo4_df.loc[temp.index, ["size_cnt"]] = len(temp)
-
-        temp["size_cnt"] = 0
-        MIN = temp.libcell_delay_fixed_load.min()
-        MAX = temp.libcell_delay_fixed_load.max()
-        interval = (MAX - MIN) / class_cnt
-        for j in range(1, class_cnt):
-            delay_h = MAX - j * interval
-            delay_l = MAX - (j + 1) * interval
-            if j == (class_cnt - 1):
-                delay_l = MIN
-            temp.loc[
-                (temp.libcell_delay_fixed_load < delay_h)
-                & (temp.libcell_delay_fixed_load >= delay_l),
-                ["size_cnt"],
-            ] = j
-        fo4_df.loc[temp.index, ["size_class2"]] = temp["size_cnt"]
-
-    cell_fo4 = fo4_df.loc[
-        :,
-        [
-            "ref",
-            "fo4_delay",
-            "libcell_delay_fixed_load",
-            "group_id",
-            "libcell_id",
-            "size_class",
-            "size_class2",
-            "size_cnt",
-        ],
-    ]
-    cell_df = cell_df.merge(cell_fo4, on="ref", how="left")
-    cell_df["libcell_id"] = cell_df["libcell_id"].fillna(-1)
-
     return pin_df, cell_df, net_df, fo4_df
 
 

@@ -4,69 +4,81 @@ from collections import defaultdict
 
 
 class CircuitOpsDir:
-    def __init__(self, CircuitOps_dir, design, tech, odb=""):
-        ### SET DESIGN ###
-        self.DESIGN_NAME = design
+    def __init__(self, orfs_flow_path, design_name, tech_name, odb_path=""):
+        self.ORFS_FLOW_DIR = orfs_flow_path
+        self.DESIGN = design_name
+        self.PLATFORM = tech_name
 
-        ### SET PLATFORM ###
-        self.PLATFORM = tech
+        ### SET OUTPUT DIRECTORY ###
+        self.OUTPUT_DIR = f"{os.path.dirname(os.path.abspath(__file__))}/../output/IRs/{self.PLATFORM}/{self.DESIGN}"
+        self.create_path()
 
-        ### INTERNAL DEFINTIONS: DO NOT MODIFY BELOW ####
-        self.CIRCUIT_OPS_DIR = CircuitOps_dir
-        self.DESIGN_DIR = (
-            self.CIRCUIT_OPS_DIR
-            + "/designs/"
-            + self.PLATFORM
-            + "/"
-            + self.DESIGN_NAME
-            + "/base/"
+        ### INTERNAL DEFINTIONS: CAREFULLY MODIFY BELOW ####
+        self.ORFS_DESIGN_DIR = (
+            f"{self.ORFS_FLOW_DIR}/designs/{self.PLATFORM}/{self.DESIGN}/base"
         )
-        self.PLATFORM_DIR = self.CIRCUIT_OPS_DIR + "/platforms/" + self.PLATFORM
-        self.RCX_RULE = (
-            self.CIRCUIT_OPS_DIR + "/platforms/" + self.PLATFORM + "/rcx_patterns.rules"
+        self.ORFS_LOG_DIR = (
+            f"{self.ORFS_FLOW_DIR}/logs/{self.PLATFORM}/{self.DESIGN}/base"
         )
-        self.SETRC_FILE = (
-            self.CIRCUIT_OPS_DIR + "/platforms/" + self.PLATFORM + "/setRC.tcl"
+        self.ORFS_OBJECT_DIR = (
+            f"{self.ORFS_FLOW_DIR}/objects/{self.PLATFORM}/{self.DESIGN}/base"
         )
+        self.ORFS_PLATFORM_DIR = f"{self.ORFS_FLOW_DIR}/platforms/{self.PLATFORM}"
+        self.ORFS_REPORT_DIR = (
+            f"{self.ORFS_FLOW_DIR}/reports/{self.PLATFORM}/{self.DESIGN}/base"
+        )
+        self.ORFS_RESULT_DIR = (
+            f"{self.ORFS_FLOW_DIR}/results/{self.PLATFORM}/{self.DESIGN}/base"
+        )
+
+        self.ORFS_2_FLOORPLAN_SDC = f"{self.ORFS_RESULT_DIR}/2_floorplan.sdc"
+        self.ORFS_3_3_PLACE_GP_ODB = f"{self.ORFS_RESULT_DIR}/3_3_place_gp.odb"
+        self.ORFS_3_4_PLACE_RESIZED_ODB = (
+            f"{self.ORFS_RESULT_DIR}/3_4_place_resized.odb"
+        )
+        self.ORFS_3_PLACE_ODB = f"{self.ORFS_RESULT_DIR}/3_place.odb"
+        self.ORFS_6_FINAL_ODB = f"{self.ORFS_RESULT_DIR}/6_final.odb"
+        self.ORFS_6_FINAL_SDC = f"{self.ORFS_RESULT_DIR}/6_final.sdc"
+        self.ORFS_6_FINAL_SPEF = f"{self.ORFS_RESULT_DIR}/6_final.spef"
+
+        self.TECH_LEF_FILE = [
+            os.path.join(root, file)
+            for root, _, files in os.walk(
+                "/mnt/d/shared/for_vdi/repos/CircuitOps/platforms/asap7/lef/"
+            )
+            for file in files
+            if "tech" in file
+        ]
+        self.LEF_FILES = [
+            os.path.join(root, file)
+            for root, _, files in os.walk(
+                "/mnt/d/shared/for_vdi/repos/CircuitOps/platforms/asap7/lef/"
+            )
+            for file in files
+            if file.endswith(".lef")
+        ]
+
+        # set SPEF_FILE "${DESIGN_DIR}/6_final.spef"
+        self.RCX_RULES_FILE = f"{self.ORFS_PLATFORM_DIR}/rcx_patterns.rules"
+        # set LEF_FILES [glob ${ORFS_PLATFORM_DIR}/lef/*.lef]
+        # set LIB_FILES [glob ${ORFS_PLATFORM_DIR}/lib/NLDM/*.lib.gz]
+        self.SDC_FILE = f"{self.ORFS_6_FINAL_SDC}"
+        self.SETRC_FILE = f"{self.ORFS_PLATFORM_DIR}/setRC.tcl"
         self.LIB_FILES = [
             os.path.join(root, file)
-            for root, _, files in os.walk(self.PLATFORM_DIR + "/lib/")
+            for root, _, files in os.walk(
+                f"/mnt/d/shared/for_vdi/repos/CircuitOps/platforms/asap7/lib/"
+            )
+            # for root, _, files in os.walk(f"{self.ORFS_OBJECT_DIR}/lib/")
             for file in files
             if file.endswith(".lib")
         ]
 
-        if odb:
-            self.ODB_FILE = odb
-            self.SDC_FILE = f"{self.DESIGN_DIR}/2_floorplan.sdc"
+        if odb_path:
+            self.ODB_FILE = odb_path
         else:
-            self.DEF_FILE = self.DESIGN_DIR + "/6_final.def.gz"
-            self.TECH_LEF_FILE = [
-                os.path.join(root, file)
-                for root, _, files in os.walk(self.PLATFORM_DIR + "/lef/")
-                for file in files
-                if file.endswith("tech.lef")
-            ]
-            self.LEF_FILES = [
-                os.path.join(root, file)
-                for root, _, files in os.walk(self.PLATFORM_DIR + "/lef/")
-                for file in files
-                if file.endswith(".lef")
-            ]
-            self.SPEF_FILE = self.DESIGN_DIR + "/6_final.spef.gz"
-            self.NETLIST_FILE = self.DESIGN_DIR + "/6_final.v.gz"
-            self.SDC_FILE = self.DESIGN_DIR + "/6_final.sdc.gz"
-
-        ### SET OUTPUT DIRECTORY ###
-        self.OUTPUT_DIR = (
-            self.CIRCUIT_OPS_DIR
-            + "/IRs/"
-            + self.PLATFORM
-            + "/"
-            + self.DESIGN_NAME
-            + "/"
-            + self.ODB_FILE.split(r"/")[-1].split(".")[0]
-        )
-        self.create_path()
+            # self.ODB_FILE = self.ORFS_3_3_PLACE_GP_ODB
+            self.ODB_FILE = self.ORFS_6_FINAL_ODB
 
         self.cell_file = self.OUTPUT_DIR + "/cell_properties.csv"
         self.design_file = self.OUTPUT_DIR + "/design_properties.csv"
@@ -110,7 +122,7 @@ class CircuitOpsTables:
             "worst_input_cap": [],
             "libcell_leakage": [],
             "fo4_delay": [],
-            "libcell_delay_fixed_load": [],
+            "fix_load_delay": [],
         }
         self.libcell_properties = pd.DataFrame(self.libcell_properties)
 
@@ -241,7 +253,7 @@ class CircuitOpsTables:
             "worst_input_cap": [-1],
             "libcell_leakage": [-1],
             "fo4_delay": [-1],
-            "libcell_delay_fixed_load": [-1],
+            "fix_load_delay": [-1],
         }
         libcell_entry = pd.DataFrame(libcell_entry)
         self.libcell_properties = pd.concat(

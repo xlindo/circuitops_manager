@@ -1,0 +1,3 @@
+[submodule "design_resource/asap7"]
+	path = design_resource/asap7
+	url = git@github.com:xlindo/asap7

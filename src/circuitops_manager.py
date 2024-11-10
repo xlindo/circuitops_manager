@@ -4,12 +4,13 @@ import pandas as pd
 
 
 class CircuitOpsManager:
-    def __init__(self, pin_df, cell_df, net_df, edge_df):
+    def __init__(self, pin_df, cell_df, net_df, edge_df, fo4_df):
         if (
             not isinstance(pin_df, pd.DataFrame)
             or not isinstance(cell_df, pd.DataFrame)
             or not isinstance(net_df, pd.DataFrame)
             or not isinstance(edge_df, pd.DataFrame)
+            or not isinstance(fo4_df, pd.DataFrame)
         ):
             raise ValueError("Input must be pandas DataFrames")
 
@@ -17,6 +18,7 @@ class CircuitOpsManager:
         self._cell_df = cell_df
         self._net_df = net_df
         self._edge_df = edge_df
+        self._fo4_df = fo4_df
 
         self.N_pin = len(pin_df["id"])
         self.N_cell = len(cell_df["id"])
@@ -40,11 +42,22 @@ class CircuitOpsManager:
         self._co.ep.id = self._co.new_ep("int")
         self._co.ep.id.a = range(self._co.ep.id.a.shape[0])
 
+        self.update_fo4()
         self.update_pin_props()
         self.update_cell_props()
         self.update_net_props()
 
         self.add_rel_ids()
+
+    @property
+    def fo4_df(self):
+        return self._fo4_df
+
+    @fo4_df.setter
+    def fo4_df(self, value):
+        if not isinstance(value, pd.DataFrame):
+            raise ValueError("fo4_df must be a pandas DataFrame")
+        self._fo4_df = value
 
     @property
     def pin_df(self):
@@ -99,11 +112,6 @@ class CircuitOpsManager:
 
         return sub_g
 
-    def get_pin_pin_graph(self):
-        return CircuitOpsManager.get_subgraph(
-            self._co, self._co.vp.type.a == 0, self._co.ep.type.a == 0
-        )
-
     ### get the largest component's id
     def get_largest_idx(self, hist):
         largest_idx = -1
@@ -126,8 +134,9 @@ class CircuitOpsManager:
         return labels
 
     def get_pin_pin_subgraph(self, cell_cnt_th=200):
-        g_pp = self.get_pin_pin_graph()
-
+        g_pp = CircuitOpsManager.get_subgraph(
+            self._co, self._co.vp.type.a == 0, self._co.ep.type.a == 0
+        )
         comp, hist = gt.label_components(g_pp, directed=False)
         comp.a[self.N_pin :] = -1
         labels = self.get_large_components(hist, th=cell_cnt_th)
@@ -143,7 +152,7 @@ class CircuitOpsManager:
         e_label.a = False
         e_ar = g_pp.get_edges(eprops=[self._co.ep.id])
         v_ar = self._co.get_vertices(
-            vprops=[self._co.vp.is_buf, self._co.vp.is_inv, v_valid_pins]
+            vprops=[self._co.vp.is_buf, self._co.vp.is_inv, self._co.vp.valid_pins]
         )
         src = e_ar[:, 0]
         tar = e_ar[:, 1]
@@ -152,9 +161,7 @@ class CircuitOpsManager:
         mask = (v_ar[src, -1] == True) & (v_ar[tar, -1] == True)
         e_label.a[idx[mask]] = True
 
-        sub_g = CircuitOpsManager.get_subgraph(g_pp, v_valid_pins, e_label)
-
-        return sub_g
+        return CircuitOpsManager.get_subgraph(g_pp, v_valid_pins, e_label)
 
     def add_rel_ids(self):
         ### add cell id to pin_df
@@ -429,7 +436,7 @@ class CircuitOpsManager:
             "staticpower": "float",
             "dynamicpower": "float",
             "fo4_delay": "float",
-            "libcell_delay_fixed_load": "float",
+            "fix_load_delay": "float",
             "group_id": "int",
             "libcell_id": "int",
             "size_class": "int",
@@ -477,6 +484,59 @@ class CircuitOpsManager:
             ].to_numpy()
             setattr(self._co.vp, prop_name, prop)
 
+    def update_fo4(self):
+        ### processing fo4 table
+        self._fo4_df["group_id"] = pd.factorize(self._fo4_df.func_id)[0] + 1
+        self._fo4_df["libcell_id"] = range(self._fo4_df.shape[0])
+        libcell_np = self._fo4_df.to_numpy()
+
+        ### assign cell size class
+        # size_class：根据 fix_load_delay 降序排序后的索引位置。
+        # size_class2：根据 fix_load_delay 值划分的更细的分类，每个分类区间内分配一个值
+        # size_cnt：记录每个组的单元数。
+        self._fo4_df["size_class"] = 0
+        self._fo4_df["size_class2"] = 0
+        self._fo4_df["size_cnt"] = 0
+        class_cnt = 50
+        for i in range(self._fo4_df.group_id.min(), self._fo4_df.group_id.max() + 1):
+            temp = self._fo4_df.loc[
+                self._fo4_df.group_id == i, ["group_id", "fix_load_delay"]
+            ]
+            temp = temp.sort_values(by=["fix_load_delay"], ascending=False)
+            self._fo4_df.loc[temp.index, ["size_class"]] = range(len(temp))
+            self._fo4_df.loc[temp.index, ["size_cnt"]] = len(temp)
+
+            temp["size_cnt"] = 0
+            MIN = temp.fix_load_delay.min()
+            MAX = temp.fix_load_delay.max()
+            interval = (MAX - MIN) / class_cnt
+            for j in range(1, class_cnt):
+                delay_h = MAX - j * interval
+                delay_l = MAX - (j + 1) * interval
+                if j == (class_cnt - 1):
+                    delay_l = MIN
+                temp.loc[
+                    (temp.fix_load_delay < delay_h) & (temp.fix_load_delay >= delay_l),
+                    ["size_cnt"],
+                ] = j
+            self._fo4_df.loc[temp.index, ["size_class2"]] = temp["size_cnt"]
+
+        cell_fo4 = self._fo4_df.loc[
+            :,
+            [
+                "ref",
+                "fo4_delay",
+                "fix_load_delay",
+                "group_id",
+                "libcell_id",
+                "size_class",
+                "size_class2",
+                "size_cnt",
+            ],
+        ]
+        self._cell_df = self._cell_df.merge(cell_fo4, on="ref", how="left")
+        self._cell_df["libcell_id"] = self._cell_df["libcell_id"].fillna(-1)
+
     def get_selected_pins(self):
         return self._pin_df[
             (self._pin_df.selected == True)
@@ -501,7 +561,7 @@ class CircuitOpsManager:
             }
         )
         cell_info = self._cell_df.loc[
-            :, ["id", "libcell_id", "fo4_delay", "libcell_delay_fixed_load"]
+            :, ["id", "libcell_id", "fo4_delay", "fix_load_delay"]
         ]
         cell_info = cell_info.rename(columns={"id": "driver_id", "y": "driver_y"})
         driver_pin_info = driver_pin_info.merge(cell_info, on="driver_id", how="left")
@@ -538,7 +598,7 @@ class CircuitOpsManager:
             columns={
                 "libcell_id": "driver_libcell_id",
                 "fo4_delay": "driver_fo4_delay",
-                "libcell_delay_fixed_load": "driver_libcell_delay_fixed_load",
+                "fix_load_delay": "driver_fix_load_delay",
                 "x_mean": "context_x_mean",
                 "x_min": "context_x_min",
                 "x_max": "context_x_max",
@@ -587,5 +647,7 @@ class CircuitOpsManager:
         sink_pin_info["stage_delay"] = (
             sink_pin_info.arc_delay_max + sink_pin_info.net_delay_max
         )
+        sink_pin_info["arc_delay"] = sink_pin_info.arc_delay_max
+        sink_pin_info["net_delay"] = sink_pin_info.net_delay_max
 
         return driver_pin_info, sink_pin_info

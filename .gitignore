@@ -1,5 +1,9 @@
 # custom
-examples/IRs/asap7/jpeg/
+tmp/
+output/IRs/asap7/aes/
+output/IRs/asap7/ibex/
+output/IRs/asap7/jpeg/
+output/IRs/asap7/riscv32i/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -17,7 +21,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/
 lib64/
 parts/
 sdist/
