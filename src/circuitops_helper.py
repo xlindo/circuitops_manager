@@ -515,11 +515,11 @@ def update_edges(
     N_cell_cell, _ = cell_cell_df.shape
     # total_e_cnt = N_pin_pin + N_cell_pin + N_net_pin + N_net_cell + N_cell_cell
 
-    edge_df["e_type"] = 0  # pin_pin
+    edge_df["type"] = 0  # pin_pin
     # edge_df.loc[0:N_pin_edge,["is_net"]] = pin_edge_df.loc[:, "is_net"]
-    edge_df.loc[N_pin_pin : N_pin_pin + N_cell_pin, ["e_type"]] = 1  # cell_pin
+    edge_df.loc[N_pin_pin : N_pin_pin + N_cell_pin, ["type"]] = 1  # cell_pin
     edge_df.loc[
-        N_pin_pin + N_cell_pin : N_pin_pin + N_cell_pin + N_net_pin, ["e_type"]
+        N_pin_pin + N_cell_pin : N_pin_pin + N_cell_pin + N_net_pin, ["type"]
     ] = 2  # net_pin
     edge_df.loc[
         N_pin_pin
@@ -528,7 +528,7 @@ def update_edges(
         + N_cell_pin
         + N_net_pin
         + N_net_cell,
-        ["e_type"],
+        ["type"],
     ] = 3  # net_cell
     edge_df.loc[
         N_pin_pin
@@ -539,9 +539,12 @@ def update_edges(
         + N_net_pin
         + N_net_cell
         + N_cell_cell,
-        ["e_type"],
+        ["type"],
     ] = 4  # cell_cell
 
+    print(
+        f" {pin_pin_df.shape=}, {cell_pin_df.shape=}, {net_pin_df.shape=}, {net_cell_df.shape=}, {cell_cell_df.shape=}, {edge_df.shape=}"
+    )
     return pin_pin_df, cell_pin_df, net_pin_df, net_cell_df, cell_cell_df, edge_df
 
 

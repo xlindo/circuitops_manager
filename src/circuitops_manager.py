@@ -1,6 +1,18 @@
-import graph_tool.all as gt
-import numpy as np
+"""
+ # @ Author: xlindo
+ # @ Create Time: 2024-11-11 08:00:00
+ # @ Modified by: hi@xlindo.com
+ # @ Modified time: 2024-11-12 00:20:15
+ # @ Description: use networkx instead of graph-tool since the latter one is hard to
+ be installed
+
+	Copyright © [xlindo.com](https://www.xlindo.com).
+ # @ License under Apache-2.0 license
+ """
+
 import pandas as pd
+import networkx as nx
+import numpy as np
 
 
 class CircuitOpsManager:
@@ -25,22 +37,18 @@ class CircuitOpsManager:
         self.N_net = len(net_df["id"])
         self.total_v_cnt = self.N_pin + self.N_cell + self.N_net
 
-        self._co = gt.Graph()
-        self._co.add_vertex(self.total_v_cnt)
+        self._co = nx.DiGraph()
+        # Add nodes
+        for i in range(self.N_pin):
+            self._co.add_node(i, type=0)  # pin
+        for i in range(self.N_pin, self.N_pin + self.N_cell):
+            self._co.add_node(i, type=1)  # cell
+        for i in range(self.N_pin + self.N_cell, self.total_v_cnt):
+            self._co.add_node(i, type=2)  # net
 
-        self._co.vp.type = self._co.new_vp("int")
-        self._co.vp.type.a[0 : self.N_pin] = 0  # pin
-        self._co.vp.type.a[self.N_pin : self.N_pin + self.N_cell] = 1  # cell
-        self._co.vp.type.a[self.N_pin + self.N_cell : self.total_v_cnt] = 2  # net
-
-        self._co.ep.type = self._co.new_ep("int")
-        self._co.add_edge_list(self._edge_df.values.tolist(), eprops=[self._co.ep.type])
-
-        self._co.vp.id = self._co.new_vp("int")
-        self._co.vp.id.a = range(self._co.vp.id.a.shape[0])
-
-        self._co.ep.id = self._co.new_ep("int")
-        self._co.ep.id.a = range(self._co.ep.id.a.shape[0])
+        # Add edges
+        for edge in self._edge_df.values.tolist():
+            self._co.add_edge(int(edge[0]), int(edge[1]), type=int(edge[2]))
 
         self.update_fo4()
         self.update_pin_props()
@@ -99,72 +107,53 @@ class CircuitOpsManager:
             raise ValueError("edge_df must be a pandas DataFrame")
         self._edge_df = value
 
-    ### generate subgraph
-    @staticmethod
-    def get_subgraph(g, v_filt, e_filt):
-        sub_g = gt.GraphView(g, vfilt=v_filt, efilt=e_filt)
-        print(
-            f"Get Sub-GraphView: vertices:{sub_g.num_vertices()}, edges:{sub_g.num_edges()}"
-        )
-        ### check whether subgraph is connected and is DAG
-        _, hist2 = gt.label_components(sub_g, directed=False)
-        print(f"DAG: {gt.is_DAG(sub_g)}")
-
-        return sub_g
-
-    ### get the largest component's id
     def get_largest_idx(self, hist):
         largest_idx = -1
         largest_cnt = 0
         labels = []
-        for i in range(len(hist)):
-            if hist[i] > largest_cnt:
-                largest_cnt = hist[i]
+        for i, count in enumerate(hist):
+            if count > largest_cnt:
+                largest_cnt = count
                 largest_idx = i
-            if hist[i] > 2000:
+            if count > 2000:
                 labels.append(i)
         return largest_idx
 
-    ### get large components' ids
     def get_large_components(self, hist, th=2000):
-        labels = []
-        for i in range(len(hist)):
-            if hist[i] > th:
-                labels.append(i)
-        return labels
+        return [i for i, count in enumerate(hist) if count > th]
+
+    @staticmethod
+    def get_subgraph(g, v_filt, e_filt):
+        sub_g = g.subgraph(v_filt)
+        print(
+            f"Get Sub-Graph: vertices:{sub_g.number_of_nodes()}, edges:{sub_g.number_of_edges()}"
+        )
+        is_dag = nx.is_directed_acyclic_graph(sub_g)
+        print(f"DAG: {is_dag}")
+
+        return sub_g
 
     def get_pin_pin_subgraph(self, cell_cnt_th=200):
-        g_pp = CircuitOpsManager.get_subgraph(
-            self._co, self._co.vp.type.a == 0, self._co.ep.type.a == 0
+        g_pp = self._co.subgraph(
+            [n for n, d in self._co.nodes(data=True) if d["type"] == 0]
         )
-        comp, hist = gt.label_components(g_pp, directed=False)
-        comp.a[self.N_pin :] = -1
+        comp = list(nx.connected_components(g_pp.to_undirected()))
+        hist = [len(c) for c in comp]
         labels = self.get_large_components(hist, th=cell_cnt_th)
-        v_valid_pins = g_pp.new_vp("bool")
-        for l in labels:
-            v_valid_pins.a[comp.a == l] = True
+        v_valid_pins = {n for l in labels for n in comp[l]}
 
-        setattr(self._co.vp, "valid_pins", v_valid_pins)
-        print(f"Valid pins: {v_valid_pins.a.sum()}")
+        nx.set_node_attributes(self._co, v_valid_pins, "valid_pins")
+        print(f"Valid pins: {len(v_valid_pins)}")
 
-        ### get subgraphs
-        e_label = g_pp.new_ep("bool")
-        e_label.a = False
-        e_ar = g_pp.get_edges(eprops=[self._co.ep.id])
-        v_ar = self._co.get_vertices(
-            vprops=[self._co.vp.is_buf, self._co.vp.is_inv, self._co.vp.valid_pins]
-        )
-        src = e_ar[:, 0]
-        tar = e_ar[:, 1]
-        idx = e_ar[:, 2]
+        e_label = [
+            (u, v)
+            for u, v, d in g_pp.edges(data=True)
+            if u in v_valid_pins and v in v_valid_pins
+        ]
 
-        mask = (v_ar[src, -1] == True) & (v_ar[tar, -1] == True)
-        e_label.a[idx[mask]] = True
-
-        return CircuitOpsManager.get_subgraph(g_pp, v_valid_pins, e_label)
+        return self.get_subgraph(g_pp, v_valid_pins, e_label)
 
     def add_rel_ids(self):
-        ### add cell id to pin_df
         cell_temp = self._cell_df.loc[:, ["name", "id"]]
         cell_temp = cell_temp.rename(columns={"name": "cellname", "id": "cell_id"})
         self._pin_df = self._pin_df.merge(cell_temp, on="cellname", how="left")
@@ -172,232 +161,13 @@ class CircuitOpsManager:
         self._pin_df.loc[idx, ["cell_id"]] = self._pin_df.loc[idx, ["id"]].to_numpy()
 
         pin_cellid = self._pin_df.cell_id.to_numpy()
-        # pin_isseq = v_is_seq.a[0:N_pin]
         pin_ismacro = self._pin_df["is_macro"].to_numpy()
-        # mask = (pin_isseq==True)| (pin_ismacro==True)
         mask = pin_ismacro == True
-        ### for pins in macro and seq, pin_cellid = pin id
         pin_cellid[mask] = self._pin_df[mask].id
 
-        ### add net id to pin_df
         net_temp = self._net_df.loc[:, ["name", "id"]]
         net_temp = net_temp.rename(columns={"name": "netname", "id": "net_id"})
         self._pin_df = self._pin_df.merge(net_temp, on="netname", how="left")
-
-    def generate_buffer_tree(self):
-        sub_g_pp = self.get_pin_pin_subgraph()
-
-        self._pin_df["selected"] = self._co.vp.valid_pins.a[0 : self.N_pin]
-
-        ### get buffer tree start and end points
-        v_bt_s = self._co.new_vp("bool")
-        v_bt_e = self._co.new_vp("bool")
-        v_bt_s.a = False
-        v_bt_e.a = False
-
-        e_ar = sub_g_pp.get_edges()
-        v_ar = self._co.get_vertices(vprops=[self._co.vp.is_buf, self._co.vp.is_inv])
-        src = e_ar[:, 0]
-        tar = e_ar[:, 1]
-        src_isbuf = v_ar[src, 1]
-        src_isinv = v_ar[src, 2]
-        tar_isbuf = v_ar[tar, 1]
-        tar_isinv = v_ar[tar, 2]
-        is_s = (
-            (tar_isbuf | tar_isinv)
-            & np.logical_not(src_isbuf)
-            & np.logical_not(src_isinv)
-        )
-        v_bt_s.a[src[is_s == 1]] = True
-
-        src_iss = v_bt_s.a[src] == True
-        is_e = (
-            (src_isbuf | src_isinv | src_iss)
-            & np.logical_not(tar_isbuf)
-            & np.logical_not(tar_isinv)
-        )
-        v_bt_e.a[tar[is_e == 1]] = True
-        print(
-            "buf tree start cnt: ",
-            v_bt_s.a.sum(),
-            "buf tree end cnt: ",
-            v_bt_e.a.sum(),
-        )
-
-        ### get buf tree start pin id ###
-        v_net_id = self._co.new_vp("int")
-        v_net_id.a[0 : self.N_pin] = self._pin_df.net_id.to_numpy()
-        mask = v_bt_s.a < 1
-        v_net_id.a[mask] = 0
-
-        ### mark buffer trees
-        v_tree_id = self._co.new_vp("int")
-        v_tree_id.a = 0
-        v_polarity = self._co.new_vp("bool")
-        v_polarity.a = True
-        e_tree_id = self._co.new_ep("int")
-        e_tree_id.a = 0
-
-        tree_end_list = []
-        buf_list = []
-
-        v_all = self._co.get_vertices()
-        l = np.array(list(range(1, int(v_bt_s.a.sum()) + 1)))
-        v_tree_id.a[v_bt_s.a > 0] = l
-        loc = v_all[v_bt_s.a > 0]
-        out_v_list = []
-        for i in loc:
-            out_e = sub_g_pp.get_out_edges(i, eprops=[self._co.ep.id])
-            out_v = out_e[:, 1]
-            v_tree_cnt = v_tree_id[i]
-            net_id = v_net_id[i]
-            e_tree_id.a[out_e[:, -1]] = v_tree_cnt
-            v_tree_id.a[out_v] = v_tree_cnt
-            v_net_id.a[out_v] = net_id
-            tree_end_list.append(
-                out_v[
-                    (self._co.vp.is_buf.a[out_v] == False)
-                    & (self._co.vp.is_inv.a[out_v] == False)
-                ]
-            )
-            out_v = out_v[
-                (self._co.vp.is_buf.a[out_v] == True)
-                | (self._co.vp.is_inv.a[out_v] == True)
-            ]
-            buf_list.append(out_v)
-            out_v_list.append(out_v)
-
-        new_v = np.concatenate(out_v_list, axis=0)
-        (N,) = new_v.shape
-        print("num of buffer tree out pins: ", N)
-
-        while N > 0:
-            out_v_list = []
-            for i in new_v:
-                if self._co.vp.is_buf[i]:
-                    out_e = sub_g_pp.get_out_edges(i, eprops=[self._co.ep.id])
-                    out_v = out_e[:, 1]
-                    v_tree_cnt = v_tree_id[i]
-                    net_id = v_net_id[i]
-                    v_p = v_polarity.a[i]
-                    e_tree_id.a[out_e[:, -1]] = v_tree_cnt
-                    v_tree_id.a[out_v] = v_tree_cnt
-                    v_net_id.a[out_v] = net_id
-                    v_polarity.a[out_v] = v_p
-                    tree_end_list.append(
-                        out_v[
-                            (self._co.vp.is_buf.a[out_v] == False)
-                            & (self._co.vp.is_inv.a[out_v] == False)
-                        ]
-                    )
-                    out_v = out_v[
-                        (self._co.vp.is_buf.a[out_v] == True)
-                        | (self._co.vp.is_inv.a[out_v] == True)
-                    ]
-                    buf_list.append(out_v)
-                    out_v_list.append(out_v)
-                else:
-                    out_e = sub_g_pp.get_out_edges(i, eprops=[self._co.ep.id])
-                    out_v = out_e[:, 1]
-                    v_tree_cnt = v_tree_id[i]
-                    net_id = v_net_id[i]
-                    v_p = v_polarity.a[i]
-                    e_tree_id.a[out_e[:, -1]] = v_tree_cnt
-                    v_tree_id.a[out_v] = v_tree_cnt
-                    v_net_id.a[out_v] = net_id
-                    if self._co.vp.dir[i]:
-                        v_polarity.a[out_v] = not v_p
-                    else:
-                        v_polarity.a[out_v] = v_p
-                    ###
-                    tree_end_list.append(
-                        out_v[
-                            (self._co.vp.is_buf.a[out_v] == False)
-                            & (self._co.vp.is_inv.a[out_v] == False)
-                        ]
-                    )
-                    ###
-                    out_v = out_v[
-                        (self._co.vp.is_buf.a[out_v] == True)
-                        | (self._co.vp.is_inv.a[out_v] == True)
-                    ]
-                    ###
-                    buf_list.append(out_v)
-                    ###
-                    out_v_list.append(out_v)
-
-            new_v = np.concatenate(out_v_list, axis=0)
-            (N,) = new_v.shape
-            print("num of buffer tree out pins: ", N)
-
-        ### get actual number of BT end pin cnt
-        tree_end_list_new = np.concatenate(tree_end_list, axis=0)
-        # print(tree_end_list_new.shape[0], v_bt_e.a.sum())
-
-        N_bt_e = tree_end_list_new.shape[0]
-        v_bt_e = self._co.new_vp("bool")
-        v_bt_e.a = False
-        v_bt_e.a[tree_end_list_new] = True
-        print(f"Buffer tree ends: {v_bt_e.a.sum()}")
-
-        self._pin_df["net_id_rm_bt"] = self._pin_df["net_id"]
-        self._pin_df.loc[tree_end_list_new, ["net_id_rm_bt"]] = v_net_id.a[
-            tree_end_list_new
-        ]
-
-        setattr(self._co.vp, "bt_s", v_bt_s)
-        setattr(self._co.vp, "bt_e", v_bt_e)
-        setattr(self._co.vp, "net_id", v_net_id)
-        setattr(self._co.vp, "tree_id", v_tree_id)
-        setattr(self._co.vp, "polarity", v_polarity)
-        setattr(self._co.ep, "tree_id", e_tree_id)
-
-    ### generate cell graph from pin graph
-    def get_cell_graph(self, pin_g, pin_cellid, g, e_type, e_id):
-        ### new mask cell graph: pre-opt
-        u_pins = pin_g.get_vertices()
-        u_cells = pin_cellid[u_pins]
-        u_cells = np.unique(u_cells).astype(int)
-
-        # add cell2cell edge
-        v_mask_cell = g.new_vp("bool")
-        e_mask_cell = g.new_ep("bool")
-        v_mask_cell.a[u_cells] = True
-
-        e_ar = g.get_edges(eprops=[e_type, e_id])
-        mask = e_ar[:, 2] == 4  # edge type == 4: cell2cell
-        e_ar = e_ar[mask]
-        e_src = e_ar[:, 0]
-        e_tar = e_ar[:, 1]
-        e_mask = (v_mask_cell.a[e_src] == True) & (v_mask_cell.a[e_tar] == True)
-        e_mask_cell.a[e_ar[:, -1][e_mask]] = True
-
-        ### construct and check u_cell_g
-        u_cell_g = self.get_subgraph(v_mask_cell, e_mask_cell)
-
-        return u_cells, u_cell_g
-
-    ### generate cell graph from cell ids
-    def get_cell_graph_from_cells(self, u_cells, e_type, e_id):
-        u_cells = np.unique(u_cells).astype(int)
-
-        # add cell2cell edge
-        v_mask_cell = self._co.new_vp("bool")
-        e_mask_cell = self._co.new_ep("bool")
-        v_mask_cell.a[u_cells] = True
-
-        e_ar = self._co.get_edges(eprops=[e_type, e_id])
-        mask = e_ar[:, 2] == 4  # edge type == 4: cell2cell
-        e_ar = e_ar[mask]
-        e_src = e_ar[:, 0]
-        e_tar = e_ar[:, 1]
-        e_mask = (v_mask_cell.a[e_src] == True) & (v_mask_cell.a[e_tar] == True)
-        e_mask_cell.a[e_ar[:, -1][e_mask]] = True
-
-        ### construct and check u_cell_g
-        u_cell_g = self.get_subgraph(self._co, v_mask_cell, e_mask_cell)
-
-        return u_cell_g
 
     def update_pin_props(self):
         properties = {
@@ -423,9 +193,8 @@ class CircuitOpsManager:
         }
 
         for prop_name, prop_type in properties.items():
-            prop = self._co.new_vp(prop_type)
-            prop.a[: self.N_pin] = self._pin_df[prop_name].to_numpy()
-            setattr(self._co.vp, prop_name, prop)
+            for i in range(self.N_pin):
+                self._co.nodes[i][prop_name] = self._pin_df[prop_name].iloc[i]
 
     def update_cell_props(self):
         properties = {
@@ -445,11 +214,10 @@ class CircuitOpsManager:
         }
 
         for prop_name, prop_type in properties.items():
-            prop = self._co.new_vp(prop_type)
-            prop.a[self.N_pin : self.N_pin + self.N_cell] = self._cell_df[
-                prop_name
-            ].to_numpy()
-            setattr(self._co.vp, prop_name, prop)
+            for i in range(self.N_pin, self.N_pin + self.N_cell):
+                self._co.nodes[i][prop_name] = self._cell_df[prop_name].iloc[
+                    i - self.N_pin
+                ]
 
         existing_props = {
             "x": "float",
@@ -462,9 +230,10 @@ class CircuitOpsManager:
         }
 
         for prop_name, prop_type in existing_props.items():
-            self._co.vp[prop_name].a[self.N_pin : self.N_pin + self.N_cell] = (
-                self._cell_df[prop_name].to_numpy()
-            )
+            for i in range(self.N_pin, self.N_pin + self.N_cell):
+                self._co.nodes[i][prop_name] = self._cell_df[prop_name].iloc[
+                    i - self.N_pin
+                ]
 
     def update_net_props(self):
         properties = {
@@ -478,22 +247,16 @@ class CircuitOpsManager:
         }
 
         for prop_name, prop_type in properties.items():
-            prop = self._co.new_vp(prop_type)
-            prop.a[self.N_pin + self.N_cell : self.total_v_cnt] = self._net_df[
-                prop_name
-            ].to_numpy()
-            setattr(self._co.vp, prop_name, prop)
+            for i in range(self.N_pin + self.N_cell, self.total_v_cnt):
+                self._co.nodes[i][prop_name] = self._net_df[prop_name].iloc[
+                    i - self.N_pin - self.N_cell
+                ]
 
     def update_fo4(self):
-        ### processing fo4 table
         self._fo4_df["group_id"] = pd.factorize(self._fo4_df.func_id)[0] + 1
         self._fo4_df["libcell_id"] = range(self._fo4_df.shape[0])
         libcell_np = self._fo4_df.to_numpy()
 
-        ### assign cell size class
-        # size_class：根据 fix_load_delay 降序排序后的索引位置。
-        # size_class2：根据 fix_load_delay 值划分的更细的分类，每个分类区间内分配一个值
-        # size_cnt：记录每个组的单元数。
         self._fo4_df["size_class"] = 0
         self._fo4_df["size_class2"] = 0
         self._fo4_df["size_cnt"] = 0
@@ -537,7 +300,215 @@ class CircuitOpsManager:
         self._cell_df = self._cell_df.merge(cell_fo4, on="ref", how="left")
         self._cell_df["libcell_id"] = self._cell_df["libcell_id"].fillna(-1)
 
+    def generate_buffer_tree(self):
+        sub_g_pp = self.get_pin_pin_subgraph()
+
+        self._pin_df["selected"] = self._pin_df.index.isin(
+            [n for n, d in self._co.nodes(data=True) if d.get("valid_pins", False)]
+        )
+
+        # Get buffer tree start and end points
+        v_bt_s = {n: False for n in self._co.nodes}
+        v_bt_e = {n: False for n in self._co.nodes}
+
+        e_ar = list(sub_g_pp.edges)
+        v_ar = {
+            n: (d.get("is_buf", False), d.get("is_inv", False))
+            for n, d in self._co.nodes(data=True)
+        }
+        src = [e[0] for e in e_ar]
+        tar = [e[1] for e in e_ar]
+        src_isbuf = [v_ar[s][0] for s in src]
+        src_isinv = [v_ar[s][1] for s in src]
+        tar_isbuf = [v_ar[t][0] for t in tar]
+        tar_isinv = [v_ar[t][1] for t in tar]
+
+        is_s = [
+            (tb or ti) and not (sb or si)
+            for sb, si, tb, ti in zip(src_isbuf, src_isinv, tar_isbuf, tar_isinv)
+        ]
+        for s in [src[i] for i, val in enumerate(is_s) if val]:
+            v_bt_s[s] = True
+
+        src_iss = [v_bt_s[s] for s in src]
+        is_e = [
+            (sb or si or ss) and not (tb or ti)
+            for sb, si, ss, tb, ti in zip(
+                src_isbuf, src_isinv, src_iss, tar_isbuf, tar_isinv
+            )
+        ]
+        for t in [tar[i] for i, val in enumerate(is_e) if val]:
+            v_bt_e[t] = True
+
+        print(
+            "buf tree start cnt: ",
+            sum(v_bt_s.values()),
+            "buf tree end cnt: ",
+            sum(v_bt_e.values()),
+        )
+
+        # Get buf tree start pin id
+        v_net_id = {n: 0 for n in self._co.nodes}
+        for i in range(self.N_pin):
+            v_net_id[i] = self._pin_df.net_id.iloc[i]
+        for n in [n for n, val in v_bt_s.items() if not val]:
+            v_net_id[n] = 0
+
+        # Mark buffer trees
+        v_tree_id = {n: 0 for n in self._co.nodes}
+        v_polarity = {n: True for n in self._co.nodes}
+        e_tree_id = {e: 0 for e in self._co.edges}
+
+        tree_end_list = []
+        buf_list = []
+
+        l = list(range(1, sum(v_bt_s.values()) + 1))
+        for i, n in enumerate([n for n, val in v_bt_s.items() if val]):
+            v_tree_id[n] = l[i]
+
+        out_v_list = []
+        for n in [n for n, val in v_bt_s.items() if val]:
+            out_e = list(sub_g_pp.out_edges(n))
+            out_v = [e[1] for e in out_e]
+            v_tree_cnt = v_tree_id[n]
+            net_id = v_net_id[n]
+            for e in out_e:
+                e_tree_id[e] = v_tree_cnt
+            for v in out_v:
+                v_tree_id[v] = v_tree_cnt
+                v_net_id[v] = net_id
+            tree_end_list.append(
+                [
+                    v
+                    for v in out_v
+                    if not (
+                        self._co.nodes[v].get("is_buf", False)
+                        or self._co.nodes[v].get("is_inv", False)
+                    )
+                ]
+            )
+            out_v = [
+                v
+                for v in out_v
+                if self._co.nodes[v].get("is_buf", False)
+                or self._co.nodes[v].get("is_inv", False)
+            ]
+            buf_list.append(out_v)
+            out_v_list.append(out_v)
+
+        new_v = [v for sublist in out_v_list for v in sublist]
+        N = len(new_v)
+        print("num of buffer tree out pins: ", N)
+
+        while N > 0:
+            out_v_list = []
+            for n in new_v:
+                out_e = list(sub_g_pp.out_edges(n))
+                out_v = [e[1] for e in out_e]
+                v_tree_cnt = v_tree_id[n]
+                net_id = v_net_id[n]
+                v_p = v_polarity[n]
+                for e in out_e:
+                    e_tree_id[e] = v_tree_cnt
+                for v in out_v:
+                    v_tree_id[v] = v_tree_cnt
+                    v_net_id[v] = net_id
+                    v_polarity[v] = (
+                        v_p if not self._co.nodes[n].get("dir", False) else not v_p
+                    )
+                tree_end_list.append(
+                    [
+                        v
+                        for v in out_v
+                        if not (
+                            self._co.nodes[v].get("is_buf", False)
+                            or self._co.nodes[v].get("is_inv", False)
+                        )
+                    ]
+                )
+                out_v = [
+                    v
+                    for v in out_v
+                    if self._co.nodes[v].get("is_buf", False)
+                    or self._co.nodes[v].get("is_inv", False)
+                ]
+                buf_list.append(out_v)
+                out_v_list.append(out_v)
+
+            new_v = [v for sublist in out_v_list for v in sublist]
+            N = len(new_v)
+            print("num of buffer tree out pins: ", N)
+
+        # Get actual number of BT end pin cnt
+        tree_end_list_new = [v for sublist in tree_end_list for v in sublist]
+        N_bt_e = len(tree_end_list_new)
+        v_bt_e = {n: False for n in self._co.nodes}
+        for n in tree_end_list_new:
+            v_bt_e[n] = True
+        print(f"Buffer tree ends: {sum(v_bt_e.values())}")
+
+        self._pin_df["net_id_rm_bt"] = self._pin_df["net_id"]
+        self._pin_df.loc[tree_end_list_new, ["net_id_rm_bt"]] = [
+            v_net_id[n] for n in tree_end_list_new
+        ]
+
+        nx.set_node_attributes(self._co, v_bt_s, "bt_s")
+        nx.set_node_attributes(self._co, v_bt_e, "bt_e")
+        nx.set_node_attributes(self._co, v_net_id, "net_id")
+        nx.set_node_attributes(self._co, v_tree_id, "tree_id")
+        nx.set_node_attributes(self._co, v_polarity, "polarity")
+
+        nx.set_edge_attributes(self._co, e_tree_id, "tree_id")
+
+    def get_cell_graph(self, pin_g, pin_cellid, g, e_type, e_id):
+        # New mask cell graph: pre-opt
+        u_pins = list(pin_g.nodes)
+        u_cells = np.unique([pin_cellid[pin] for pin in u_pins]).astype(int)
+
+        # Add cell2cell edge
+        v_mask_cell = {n: False for n in g.nodes}
+        e_mask_cell = {e: False for e in g.edges}
+        for cell in u_cells:
+            v_mask_cell[cell] = True
+
+        e_ar = [
+            (u, v, d) for u, v, d in g.edges(data=True) if d[e_type] == 4
+        ]  # edge type == 4: cell2cell
+        for u, v, d in e_ar:
+            if v_mask_cell[u] and v_mask_cell[v]:
+                e_mask_cell[(u, v)] = True
+
+        # Construct and check u_cell_g
+        u_cell_g = self.get_subgraph(g, v_mask_cell, e_mask_cell)
+
+        return u_cells, u_cell_g
+
+    def get_cell_graph_from_cells(self, u_cells, e_type, e_id):
+        u_cells = np.unique(u_cells).astype(int)
+
+        # Add cell2cell edge
+        v_mask_cell = {n: False for n in self._co.nodes}
+        e_mask_cell = {e: False for e in self._co.edges}
+        for cell in u_cells:
+            v_mask_cell[cell] = True
+
+        e_ar = [
+            (u, v, d) for u, v, d in self._co.edges(data=True) if d[e_type] == 4
+        ]  # edge type == 4: cell2cell
+        for u, v, d in e_ar:
+            if v_mask_cell[u] and v_mask_cell[v]:
+                e_mask_cell[(u, v)] = True
+
+        # Construct and check u_cell_g
+        u_cell_g = self.get_subgraph(self._co, v_mask_cell, e_mask_cell)
+
+        return u_cell_g
+
     def get_selected_pins(self):
+        self.get_pin_pin_subgraph()
+        self._pin_df["selected"] = self._pin_df.index.isin(
+            [n for n, d in self._co.nodes(data=True) if d.get("valid_pins", False)]
+        )
         return self._pin_df[
             (self._pin_df.selected == True)
             & (self._pin_df.is_buf == False)
@@ -545,7 +516,7 @@ class CircuitOpsManager:
         ]
 
     def get_driver_sink_info(self, pin_pin_df, selected_pin_df):
-        ### get driver pins and related properties ###
+        # Get driver pins and related properties
         driver_pin = selected_pin_df[selected_pin_df.dir == 0]
         driver_pin_info = driver_pin.loc[
             :, ["id", "net_id", "x", "y", "cell_id", "risearr", "fallarr"]
@@ -563,22 +534,22 @@ class CircuitOpsManager:
         cell_info = self._cell_df.loc[
             :, ["id", "libcell_id", "fo4_delay", "fix_load_delay"]
         ]
-        cell_info = cell_info.rename(columns={"id": "driver_id", "y": "driver_y"})
+        cell_info = cell_info.rename(columns={"id": "driver_id"})
         driver_pin_info = driver_pin_info.merge(cell_info, on="driver_id", how="left")
 
-        ### get sink pins and related properties ###
+        # Get sink pins and related properties
         sink_pin = selected_pin_df[selected_pin_df.dir == 1]
         sink_pin_info = sink_pin.loc[
             :, ["id", "x", "y", "cap", "net_id", "cell_id", "risearr", "fallarr"]
         ]
         sink_pin_info = sink_pin_info.merge(driver_pin_info, on="net_id", how="left")
 
-        sink_pin_info.x = sink_pin_info.x - sink_pin_info.driver_x
-        sink_pin_info.y = sink_pin_info.y - sink_pin_info.driver_y
+        sink_pin_info["x"] = sink_pin_info["x"] - sink_pin_info["driver_x"]
+        sink_pin_info["y"] = sink_pin_info["y"] - sink_pin_info["driver_y"]
         idx = sink_pin_info[pd.isna(sink_pin_info.driver_x)].index
         sink_pin_info = sink_pin_info.drop(idx)
 
-        ### get context sink locations ###
+        # Get context sink locations
         sink_loc = sink_pin_info.groupby("net_id", as_index=False).agg(
             {
                 "x": ["mean", "min", "max", "std"],
@@ -592,7 +563,7 @@ class CircuitOpsManager:
         sink_loc["x_std"] = sink_loc["x_std"].fillna(0)
         sink_loc["y_std"] = sink_loc["y_std"].fillna(0)
 
-        ### merge information and rename ###
+        # Merge information and rename
         sink_pin_info = sink_pin_info.merge(sink_loc, on="net_id", how="left")
         sink_pin_info = sink_pin_info.rename(
             columns={
@@ -618,8 +589,7 @@ class CircuitOpsManager:
             ["driver_risearr", "driver_fallarr"]
         ].min(axis=1)
 
-        # def get_delays(self, pin_pin_df, sink_pin_info):
-        ### get cell arc delays ###
+        # Get cell arc delays
         cell_arc = pin_pin_df.groupby("tar_id", as_index=False).agg(
             {"arc_delay": ["mean", "min", "max"]}
         )
@@ -632,7 +602,7 @@ class CircuitOpsManager:
         idx = sink_pin_info[pd.isna(sink_pin_info.arc_delay_mean)].index
         sink_pin_info = sink_pin_info.drop(idx)
 
-        ### get net delay ###
+        # Get net delay
         cell_arc = cell_arc.rename(
             columns={
                 "driver_pin_id": "id",
@@ -643,11 +613,11 @@ class CircuitOpsManager:
         )
         sink_pin_info = sink_pin_info.merge(cell_arc, on="id", how="left")
 
-        ### stage delay = driver cell arc delay + net delay ###
+        # Stage delay = driver cell arc delay + net delay
         sink_pin_info["stage_delay"] = (
-            sink_pin_info.arc_delay_max + sink_pin_info.net_delay_max
+            sink_pin_info["arc_delay_max"] + sink_pin_info["net_delay_max"]
         )
-        sink_pin_info["arc_delay"] = sink_pin_info.arc_delay_max
-        sink_pin_info["net_delay"] = sink_pin_info.net_delay_max
+        sink_pin_info["arc_delay"] = sink_pin_info["arc_delay_max"]
+        sink_pin_info["net_delay"] = sink_pin_info["net_delay_max"]
 
         return driver_pin_info, sink_pin_info

@@ -8,7 +8,8 @@ Out-of-the-box python package for [CircuitOps](https://github.com/NVlabs/Circuit
 
 * Results from `OpenROAD-flow-scripts`
 * Python packages
-    * `graph_tool`
+    * `networkx`
+        * Different from original `graph-tool`, which is not easy to be installed
     * `pandas`
     * `numpy`
 
